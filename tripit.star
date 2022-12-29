@@ -4,28 +4,36 @@ Summary: Day-Countdown to next trip in TripIt
 Description: Show a countdown of days to the next trips in TripIt
 Author: github.com/roxxi
 """
-
-load("cache.star", "cache")
 load("encoding/json.star", "json")
+load("cache.star", "cache")
 load("humanize.star", "humanize")
 load("http.star", "http")
 load("time.star", "time")
 load("schema.star", "schema")
-load("secret.star", "secret")
 load("render.star", "render")
 
 
 
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 CONFIG_TRIPIT_ICS = "tripit-ics"
+CONFIG_TZ = "timezone"
 
 
 # TODO need to figure out if I need the timezone explicitly shared or not
 def timezone(config):
     return config.get("timezone") or DEFAULT_TIMEZONE
 
-def actual_now(config):
-    return time.now().in_location(timezone(config))
+def get_timezone(location):
+    loc = json.decode(location)
+    return [
+        schema.Option(
+            display = loc["timezone"],
+            value = loc["timezone"],
+        )
+    ]
+
+def actual_now(location):
+    return time.now().in_location(location)
 
 def get_schema():
     return schema.Schema(
@@ -37,12 +45,19 @@ def get_schema():
                 desc = "Link to your TripIt iCal Feed from TripIt.com",
                 icon = "calendar",
             ),
+            schema.LocationBased(
+                id = CONFIG_TZ,
+                name = "Primary Timezone",
+                desc = "Your Primary Timezone",
+                icon = "clock",
+                handler = get_timezone,
+            ),
         ]
     )
 
 
 
-def parse_ics(ics):
+def parse_ics(ics, location="UTC"):
     # we'll return this list of event dictionaries after parsing
     # out the trips (not every evernt)
     events = []
@@ -86,17 +101,29 @@ def parse_ics(ics):
                  .replace("\\n", "\n") \
                  .replace("\\", "")
         elif(l.startswith("DTSTART;VALUE=DATE:")):
-            event["start_date"] = \
-                l.removeprefix("DTSTART;VALUE=DATE:") \
+            d = l.removeprefix("DTSTART;VALUE=DATE:") \
                  .strip() \
                  .replace("\\n", "\n") \
                  .replace("\\", "")
+            # d format "YYYYMMDD"
+            event["start_date_raw"] = d
+            event["start_date_parsed"] = \
+                time.time(year = int(d[0:4]), \
+                          month = int(d[4:6]), \
+                          day = int(d[6:8]), \
+                          location=location)
         elif(l.startswith("DTEND;VALUE=DATE:")):
-            event["end_date"] = \
-                l.removeprefix("DTEND;VALUE=DATE:") \
-                 .strip() \
-                 .replace("\\n", "\n") \
-                 .replace("\\", "")
+            d= l.removeprefix("DTEND;VALUE=DATE:") \
+                .strip() \
+                .replace("\\n", "\n") \
+                .replace("\\", "")
+            # d format "YYYYMMDD"
+            event["end_date_raw"] = d
+            event["end_date_parsed"] = \
+                time.time(year = int(d[0:4]), \
+                          month = int(d[4:6]), \
+                          day = int(d[6:8]), \
+                          location=location)
         # SUMMARY:
         elif(l.startswith("SUMMARY:")):
             event["summary"] = \
@@ -141,38 +168,53 @@ def parse_ics(ics):
     # TODO: Add fail if num_begins != num_ends
     return events
 
+def future_events_countdown(events, location="UTC"):
+    upcoming = []
+    now = actual_now(location)
+    for e in events:
+        start = e["start_date_parsed"]
+        duration =  start - now
+        if any([duration.hours   >= 0, \
+                duration.minutes >= 0, \
+                duration.seconds >= 0,  ]):
+            e["countdown_duration"] = duration
+            e["relative_string"] = \
+                humanize.relative_time(now, start)
+            upcoming.append(e)
+    return upcoming
+
+
+def render_event(e):
+    return render.Row(children = \
+                      [render.Text(content = e["summary"] + ": ",
+                                   font = "tb-8",
+                                   ),
+                       # TODO this is bad logic because if something is 12 months it will show 1 month
+                       render.Text(content = \
+                                   e["relative_string"][0] + \
+                                   e["relative_string"][2], 
+                                   font = "tb-8",
+                                   ),
+                       ])
 
 def main(config):
 
-    resp = http.get(config[CONFIG_TRIPIT_ICS])
+    ics_uri = config[CONFIG_TRIPIT_ICS]
+    location = timezone(config)
 
     # TODO: This should be cached
+    resp = http.get(ics_uri)
     ics = resp.body()
-    events = parse_ics(ics)
-    # TODO - Filter events to events in the future
-    # TODO - Next : transform each events raw data into displayable data
-    # TODO - Display Data
+    events = parse_ics(ics, location)
+    future = future_events_countdown(events, location)
 
-    for e in events:
-        print("Summary: %s\nDescription:\n%s" % \
-              (e["summary"], e["description"]))
+    rows = []
+    for e in future:
+        rows.append(render_event(e))
 
+    # TODO: Needs to have two columns so I can align the text
     return render.Root(
         delay = 500,
-        child = render.Box(
-            child = render.Animation(
-                children = [
-                    render.Text(
-                        # content = actual_now(config).format("3:04 PM"),
-                        content = "small steps lead to big changes",
-                        font = "6x13",
-                    ),
-                    render.Text(
-                        content = actual_now(config).format("3 04 PM"),
-                        font = "6x13",
-                    ),
-                ],
-            ),
-        ),
-    )
+        child = render.Column(children = rows))
+
 
