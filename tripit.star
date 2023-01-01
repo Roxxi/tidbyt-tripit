@@ -6,6 +6,7 @@ Author: github.com/roxxi
 """
 load("encoding/json.star", "json")
 load("cache.star", "cache")
+load("re.star", "re")
 load("humanize.star", "humanize")
 load("http.star", "http")
 load("time.star", "time")
@@ -168,7 +169,8 @@ def parse_ics(ics, location="UTC"):
     # TODO: Add fail if num_begins != num_ends
     return events
 
-def future_events_countdown(events, location="UTC"):
+
+def filter_future_events(events, location="UTC"):
     upcoming = []
     now = actual_now(location)
     for e in events:
@@ -177,11 +179,29 @@ def future_events_countdown(events, location="UTC"):
         if any([duration.hours   >= 0, \
                 duration.minutes >= 0, \
                 duration.seconds >= 0,  ]):
-            e["countdown_duration"] = duration
-            e["relative_string"] = \
-                humanize.relative_time(now, start)
             upcoming.append(e)
     return upcoming
+
+
+def relative_to_abbreviated(relative_string):
+    # The relative string looks like "5 months" or "10 days"
+    # We want to extract it into "5m" or "10d"
+    numbers = re.findall("\\d+", relative_string)
+    number = numbers[0]
+    unit_full = re.findall("[a-zA-Z]+", relative_string)
+    unit_one = unit_full[0][0]
+    return number+unit_one
+
+
+def calculate_countdown(events, location="UTC"):
+    now = actual_now(location)
+    for e in events:
+        start = e["start_date_parsed"]
+        duration =  start - now
+        e["countdown_duration"] = duration
+        rs = humanize.relative_time(now, start)
+        e["relative_string"] = rs
+        e["relative_abbr"] = relative_to_abbreviated(rs)
 
 
 def render_event(e):
@@ -189,10 +209,8 @@ def render_event(e):
                       [render.Text(content = e["summary"] + ": ",
                                    font = "tb-8",
                                    ),
-                       # TODO this is bad logic because if something is 12 months it will show 1 month
                        render.Text(content = \
-                                   e["relative_string"][0] + \
-                                   e["relative_string"][2], 
+                                   e["relative_abbr"],
                                    font = "tb-8",
                                    ),
                        ])
@@ -206,10 +224,11 @@ def main(config):
     resp = http.get(ics_uri)
     ics = resp.body()
     events = parse_ics(ics, location)
-    future = future_events_countdown(events, location)
+    future_events = filter_future_events(events, location)
+    calculate_countdown(future_events)
 
     rows = []
-    for e in future:
+    for e in future_events:
         rows.append(render_event(e))
 
     # TODO: Needs to have two columns so I can align the text
