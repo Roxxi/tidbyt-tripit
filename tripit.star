@@ -18,6 +18,9 @@ load("render.star", "render")
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 CONFIG_TRIPIT_ICS = "tripit-ics"
 CONFIG_TZ = "timezone"
+# TODO Create a dummy tripit account with a default calendar so the user
+# can reconfigure. The event should say there is no event.
+DEFAULT_TRIPIT_URL = ""
 
 
 # TODO need to figure out if I need the timezone explicitly shared or not
@@ -217,7 +220,8 @@ def render_event(e):
 
 def main(config):
 
-    ics_uri = config[CONFIG_TRIPIT_ICS]
+    # TODO Handle the 0 state to have a better default behavior
+    ics_uri = config.str(CONFIG_TRIPIT_ICS, DEFAULT_TRIPIT_URL)
     location = timezone(config)
 
     # TODO: This should be cached
