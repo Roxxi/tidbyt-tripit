@@ -221,6 +221,7 @@ def render_event(e):
 def main(config):
 
     # TODO Handle the 0 state to have a better default behavior
+    # TODO have option to show days only instead of weeks or months
     ics_uri = config.str(CONFIG_TRIPIT_ICS, DEFAULT_TRIPIT_URL)
     location = timezone(config)
 
